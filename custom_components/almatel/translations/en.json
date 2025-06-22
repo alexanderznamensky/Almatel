@@ -1,0 +1,16 @@
+
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Almatel Sensor",
+        "description": "Configure your sensor",
+        "data": {
+          "name": "Name",
+          "sensor_id": "Sensor ID (used in MQTT topic)"
+        }
+      }
+    },
+    "error": {}
+  }
+}
