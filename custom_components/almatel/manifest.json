@@ -1,6 +1,6 @@
 {
   "domain": "almatel",
-  "name": "Almatel Balance",
+  "name": "Almatel",
   "codeowners": ["@catherine"],
   "config_flow": true,
   "documentation": "https://github.com/alexanderznamensky/Almatel",
