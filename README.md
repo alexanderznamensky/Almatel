@@ -14,11 +14,12 @@
 
 ## 📊 Создаваемые сенсоры
 
-После установки создаются 3 сенсора:
+После установки создается сенсор:
 
-1. **sensor.almatel_balance** - Баланс (₽)
-2. **sensor.almatel_due_date** - Срок оплаты (дата)
-3. **sensor.almatel_days_left** - Дней до оплаты
+**sensor.almatelad** - Баланс (₽)
+С атрибутами:
+**due_date** - Срок оплаты (дата)
+**days_left** - Дней до оплаты
 
 ## 📋 Требования
 
@@ -48,7 +49,7 @@ cd /config/custom_components/
 
 1. Перейдите в **Настройки** → **Устройства и службы**
 2. Нажмите **+ Добавить интеграцию**
-3. Найдите **Almatel Balance**
+3. Найдите **Almatel Balance** или **Almatel**
 4. Введите данные:
    - Логин Almatel
    - Пароль Almatel
@@ -62,15 +63,15 @@ cd /config/custom_components/
 
 ### Шаг 3: Установка AppDaemon скрипта
 
-1. Скопируйте файл `almatel_appdaemon.py` в папку AppDaemon:
+1. Скопируйте файл `almatel.py` в папку AppDaemon:
    ```bash
-   cp almatel_appdaemon.py /config/appdaemon/apps/
+   cp almatel.py /config/appdaemon/apps/
    ```
 
 2. Добавьте в `/config/appdaemon/apps/apps.yaml`:
    ```yaml
-   almatel_checker:
-     module: almatel_appdaemon
+   almatel:
+     module: almatel
      class: Almatel
    ```
 
@@ -81,7 +82,7 @@ cd /config/custom_components/
 ### Изменение интервала обновления
 
 1. Перейдите в **Настройки** → **Устройства и службы**
-2. Найдите **Almatel Balance**
+2. Найдите **Almatel Balance** или **Almatel**
 3. Нажмите **Настроить**
 4. Измените интервал обновления
 
@@ -99,13 +100,30 @@ service: almatel.update_balance
 ```yaml
 type: entities
 title: Almatel
-entities:
-  - entity: sensor.almatel_balance
-    name: Баланс
-  - entity: sensor.almatel_due_date
-    name: Срок оплаты
-  - entity: sensor.almatel_days_left
-    name: Дней осталось
+  - entity: sensor.almatelad
+    unit_of_measurement: RUR
+    type: custom:multiple-entity-row
+    state_header: Текущий баланс
+    secondary_info: last-changed
+    tap_action:
+      action: more-info
+    hold_action:
+      action: url
+      confirmation: true
+      url_path: https://almatel.ru/lk/login.php
+    double_tap_action:
+      action: url
+      confirmation: false
+      url_path: https://almatel.ru/lk/login.php
+    entities:
+      - entity: sensor.almatelad
+        type: attribute
+        attribute: days_left
+        name: Дней до оплаты
+      - entity: sensor.almatelad
+        type: attribute
+        attribute: due_date
+        name: Срок оплаты (дата)
 ```
 
 ### Уведомление о низком балансе
@@ -115,7 +133,7 @@ automation:
   - alias: "Almatel: Низкий баланс"
     trigger:
       - platform: numeric_state
-        entity_id: sensor.almatel_balance
+        entity_id: sensor.almatelad
         below: 100
     action:
       - service: notify.mobile_app
