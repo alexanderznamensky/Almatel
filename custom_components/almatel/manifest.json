@@ -1,7 +1,7 @@
 {
   "domain": "almatel",
   "name": "Almatel",
-  "codeowners": ["@catherine"],
+  "codeowners": ["@alexanderznamensky"],
   "config_flow": true,
   "documentation": "https://github.com/alexanderznamensky/Almatel",
   "issue_tracker": "https://github.com/alexanderznamensky/Almatel/issues",
