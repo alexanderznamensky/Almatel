@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "requirements": ["paho-mqtt>=1.6.1"],
   "dependencies": ["mqtt"],
-  "version": "1.2.0"
+  "version": "5.0.1"
 }

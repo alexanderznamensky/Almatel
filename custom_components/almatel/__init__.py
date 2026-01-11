@@ -11,8 +11,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 
-# Предварительная загрузка платформ для избежания блокирующего импорта
-from . import sensor  # noqa: F401
+from . import sensor
 
 from .const import (
     DOMAIN,
@@ -38,20 +37,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry.data
 
-    # Сохраняем настройки в файл для AppDaemon
     await async_save_config_for_appdaemon(hass, entry)
 
-    # Настраиваем платформы
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Регистрируем сервис для ручного обновления
     async def handle_update_balance(call: ServiceCall) -> None:
         """Handle the service call to update balance."""
         await async_trigger_appdaemon_update(hass, entry)
 
     hass.services.async_register(DOMAIN, SERVICE_UPDATE, handle_update_balance)
 
-    # Отправляем команду AppDaemon для первого запуска
     await async_trigger_appdaemon_update(hass, entry)
 
     return True

@@ -1,27 +1,35 @@
-"""Sensor platform for Almatel Balance integration."""
+"""Sensor platform for Almatel integration."""
 from __future__ import annotations
 
 import json
 import logging
 from typing import Any
+from datetime import datetime, timezone
 
 from homeassistant.components import mqtt
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    DOMAIN,
-    MQTT_STATE_TOPIC,
-    MQTT_ATTR_TOPIC,
-    ATTR_DUE_DATE,
-    ATTR_DAYS_LEFT,
-    ATTR_MESSAGE,
-)
+from .const import DOMAIN, MQTT_STATE_TOPIC, MQTT_ATTR_TOPIC
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    """Current UTC time in ISO format."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _decode_payload(payload: Any) -> str:
+    """MQTT payload may be str or bytes depending on HA/mqtt stack."""
+    if payload is None:
+        return ""
+    if isinstance(payload, (bytes, bytearray)):
+        return payload.decode("utf-8", errors="ignore")
+    return str(payload)
 
 
 async def async_setup_entry(
@@ -29,25 +37,23 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Almatel Balance sensor from a config entry."""
-    
-    sensors = [
-        AlmatelBalanceSensor(config_entry),
-        AlmatelDueDateSensor(config_entry),
-        AlmatelDaysLeftSensor(config_entry),
-    ]
-    
-    async_add_entities(sensors)
+    async_add_entities([AlmatelAdSensor(config_entry)])
 
 
-class AlmatelBaseSensor(SensorEntity):
-    """Base class for Almatel sensors."""
+class AlmatelAdSensor(SensorEntity):
+    """Single sensor: state=balance, attrs=due_date/days_left/message/last_update."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
+    _attr_name = "Almatel Баланс"
+    _attr_unique_id = f"{DOMAIN}_almatelad"
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+    _attr_icon = "mdi:cash"
 
     def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize the sensor."""
         self._config_entry = config_entry
+
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, "almatel_device_01")},
             name="Almatel Личный Кабинет",
@@ -55,132 +61,69 @@ class AlmatelBaseSensor(SensorEntity):
             model="WebChecker v2",
         )
 
-
-class AlmatelBalanceSensor(AlmatelBaseSensor):
-    """Representation of Almatel Balance sensor."""
-
-    _attr_name = "Баланс"
-    _attr_native_unit_of_measurement = "RUB"
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:cash"
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize the balance sensor."""
-        super().__init__(config_entry)
-        self._attr_unique_id = f"{DOMAIN}_balance"
+        self._attr_native_value = None
         self._attr_extra_state_attributes = {}
+        self._unsubs: list = []
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT topics when added to hass."""
-        
         @callback
-        def state_message_received(msg):
-            """Handle new MQTT state messages."""
+        def on_state(msg) -> None:
             try:
-                self._attr_native_value = float(msg.payload)
+                raw = _decode_payload(msg.payload)
+                self._attr_native_value = float(raw)
+
+                attrs = dict(self._attr_extra_state_attributes or {})
+                attrs["last_update"] = _now_iso()
+                self._attr_extra_state_attributes = attrs
+
                 self.async_write_ha_state()
-                _LOGGER.debug("Balance updated: %s", msg.payload)
+                _LOGGER.debug("Balance updated: %s", raw)
+
             except (ValueError, TypeError) as e:
-                _LOGGER.error("Failed to parse balance: %s", e)
+                _LOGGER.error("Failed to parse balance from '%s': %s", msg.payload, e)
 
         @callback
-        def attr_message_received(msg):
-            """Handle new MQTT attribute messages."""
+        def on_attr(msg) -> None:
+            raw = _decode_payload(msg.payload)
             try:
-                attributes = json.loads(msg.payload)
-                self._attr_extra_state_attributes = {
-                    ATTR_DUE_DATE: attributes.get("due_date"),
-                    ATTR_DAYS_LEFT: attributes.get("days_left"),
-                    ATTR_MESSAGE: attributes.get("message"),
-                }
-                self.async_write_ha_state()
-                _LOGGER.debug("Attributes updated: %s", attributes)
-            except (json.JSONDecodeError, TypeError) as e:
-                _LOGGER.error("Failed to parse attributes: %s", e)
+                data = json.loads(raw)
 
-        await mqtt.async_subscribe(
-            self.hass, MQTT_STATE_TOPIC, state_message_received, qos=0
-        )
-        await mqtt.async_subscribe(
-            self.hass, MQTT_ATTR_TOPIC, attr_message_received, qos=0
-        )
+                due_date = data.get("due_date")
+                days_left = data.get("days_left")
+                message = data.get("message")
 
+                attrs = dict(self._attr_extra_state_attributes or {})
 
-class AlmatelDueDateSensor(AlmatelBaseSensor):
-    """Representation of Almatel Due Date sensor."""
+                if due_date is not None:
+                    attrs["due_date"] = str(due_date)
 
-    _attr_name = "Срок оплаты"
-    _attr_device_class = SensorDeviceClass.DATE
-    _attr_icon = "mdi:calendar-clock"
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize the due date sensor."""
-        super().__init__(config_entry)
-        self._attr_unique_id = f"{DOMAIN}_due_date"
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT topics when added to hass."""
-        
-        @callback
-        def attr_message_received(msg):
-            """Handle new MQTT attribute messages."""
-            try:
-                attributes = json.loads(msg.payload)
-                due_date = attributes.get("due_date")
-                if due_date:
-                    # Конвертируем DD.MM.YYYY в YYYY-MM-DD для HA
-                    parts = due_date.split(".")
-                    if len(parts) == 3:
-                        self._attr_native_value = f"{parts[2]}-{parts[1]}-{parts[0]}"
-                        self.async_write_ha_state()
-                        _LOGGER.debug("Due date updated: %s", self._attr_native_value)
-            except (json.JSONDecodeError, TypeError, IndexError) as e:
-                _LOGGER.error("Failed to parse due date: %s", e)
-
-        await mqtt.async_subscribe(
-            self.hass, MQTT_ATTR_TOPIC, attr_message_received, qos=0
-        )
-
-
-class AlmatelDaysLeftSensor(AlmatelBaseSensor):
-    """Representation of Almatel Days Left sensor."""
-
-    _attr_name = "Дней до оплаты"
-    _attr_native_unit_of_measurement = "дней"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:calendar-today"
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize the days left sensor."""
-        super().__init__(config_entry)
-        self._attr_unique_id = f"{DOMAIN}_days_left"
-        self._attr_extra_state_attributes = {}
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT topics when added to hass."""
-        
-        @callback
-        def attr_message_received(msg):
-            """Handle new MQTT attribute messages."""
-            try:
-                attributes = json.loads(msg.payload)
-                days_left = attributes.get("days_left")
-                message = attributes.get("message")
-                
                 if days_left is not None:
-                    self._attr_native_value = int(days_left)
-                    
-                if message:
-                    self._attr_extra_state_attributes = {
-                        ATTR_MESSAGE: message
-                    }
-                    
-                self.async_write_ha_state()
-                _LOGGER.debug("Days left updated: %s", days_left)
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                _LOGGER.error("Failed to parse days left: %s", e)
+                    try:
+                        attrs["days_left"] = int(days_left)
+                    except (ValueError, TypeError):
+                        attrs["days_left"] = days_left
 
-        await mqtt.async_subscribe(
-            self.hass, MQTT_ATTR_TOPIC, attr_message_received, qos=0
-        )
+                if message is not None:
+                    attrs["message"] = str(message)
+
+                attrs["last_update"] = _now_iso()
+                self._attr_extra_state_attributes = attrs
+
+                self.async_write_ha_state()
+                _LOGGER.debug("Attributes updated: %s", attrs)
+
+            except json.JSONDecodeError as e:
+                _LOGGER.error("Bad JSON in MQTT_ATTR_TOPIC: '%s' (%s)", raw, e)
+
+        unsub1 = await mqtt.async_subscribe(self.hass, MQTT_STATE_TOPIC, on_state, qos=0)
+        unsub2 = await mqtt.async_subscribe(self.hass, MQTT_ATTR_TOPIC, on_attr, qos=0)
+
+        self._unsubs.extend([unsub1, unsub2])
+
+    async def async_will_remove_from_hass(self) -> None:
+        for unsub in self._unsubs:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._unsubs.clear()

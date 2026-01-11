@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Настройка Almatel Balance",
+        "title": "Настройка Almatel",
         "description": "Введите данные для доступа к личному кабинету Almatel и настройки MQTT",
         "data": {
           "almatel_login": "Логин Almatel",
@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Настройки Almatel Balance",
+        "title": "Настройки Almatel",
         "description": "Изменить параметры интеграции",
         "data": {
           "update_interval": "Интервал обновления (минуты)"
