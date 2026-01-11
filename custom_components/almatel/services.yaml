@@ -1,0 +1,4 @@
+update_balance:
+  name: Обновить баланс
+  description: Принудительно запустить обновление баланса Almatel
+  fields: {}
