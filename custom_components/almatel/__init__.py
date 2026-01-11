@@ -11,6 +11,9 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 
+# Предварительная загрузка платформ для избежания блокирующего импорта
+from . import sensor  # noqa: F401
+
 from .const import (
     DOMAIN,
     CONF_ALMATEL_LOGIN,

@@ -8,7 +8,6 @@ from typing import Any
 from homeassistant.components import mqtt
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CURRENCY_RUBLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -61,7 +60,7 @@ class AlmatelBalanceSensor(AlmatelBaseSensor):
     """Representation of Almatel Balance sensor."""
 
     _attr_name = "Баланс"
-    _attr_native_unit_of_measurement = CURRENCY_RUBLE
+    _attr_native_unit_of_measurement = "RUB"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash"
