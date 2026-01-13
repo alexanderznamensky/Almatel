@@ -1,0 +1,19 @@
+# Конфигурация AppDaemon для Almatel
+# Скопируйте этот файл в apps.yaml и отредактируйте
+
+almatel_checker:
+  module: almatel
+  class: Almatel
+  
+  # Настройки Almatel
+  almatel_username: "user245343"
+  almatel_password: "ike7qxnc"
+  
+  # Настройки MQTT
+  mqtt_host: "172.16.1.18"
+  mqtt_port: 1883
+  mqtt_user: "zna123home"
+  mqtt_pass: "ghjcnjqhome"
+  
+  # Интервал обновления (в секундах)
+  update_interval: 3600
