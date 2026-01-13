@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.components import mqtt
 
 from . import sensor
 
@@ -94,27 +95,16 @@ async def async_save_config_for_appdaemon(
     await hass.async_add_executor_job(write_config)
 
 
-async def async_trigger_appdaemon_update(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Send MQTT command to trigger AppDaemon update."""
-    
-    def send_mqtt_command():
-        """Send MQTT command."""
-        try:
-            publish.single(
-                topic=MQTT_COMMAND_TOPIC,
-                payload="update",
-                retain=False,
-                hostname=entry.data[CONF_MQTT_HOST],
-                port=entry.data.get(CONF_MQTT_PORT, 1883),
-                auth={
-                    "username": entry.data[CONF_MQTT_USER],
-                    "password": entry.data[CONF_MQTT_PASSWORD]
-                }
-            )
-            _LOGGER.info("MQTT command sent to AppDaemon")
-        except Exception as e:
-            _LOGGER.error("Failed to send MQTT command: %s", e)
-
-    await hass.async_add_executor_job(send_mqtt_command)
+async def async_trigger_appdaemon_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Send MQTT command to trigger AppDaemon update via HA MQTT connection."""
+    try:
+        await mqtt.async_publish(
+            hass,
+            MQTT_COMMAND_TOPIC,
+            "update",
+            qos=0,
+            retain=False,
+        )
+        _LOGGER.info("MQTT command published to %s", MQTT_COMMAND_TOPIC)
+    except Exception as e:
+        _LOGGER.exception("Failed to publish MQTT command: %s", e)
