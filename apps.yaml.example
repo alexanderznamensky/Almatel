@@ -6,14 +6,14 @@ almatel_checker:
   class: Almatel
   
   # Настройки Almatel
-  almatel_username: "user245343"
-  almatel_password: "ike7qxnc"
+  almatel_username: "your_username"
+  almatel_password: "your_password"
   
   # Настройки MQTT
-  mqtt_host: "172.16.1.18"
-  mqtt_port: 1883
-  mqtt_user: "zna123home"
-  mqtt_pass: "ghjcnjqhome"
+  mqtt_host: "your_IP"
+  mqtt_port: "your_port"
+  mqtt_user: "yuor_username"
+  mqtt_pass: "yuor_password"
   
   # Интервал обновления (в секундах)
   update_interval: 3600
