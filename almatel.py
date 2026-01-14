@@ -1,5 +1,5 @@
 # almatel.py
-# v5 - 2026-01-11
+# v6 - 2026-01-14
 # Universal AppDaemon + CLI runner for Almatel balance checker
 # - Works as AppDaemon app class: Almatel(hass.Hass)
 # - Works as CLI script: python almatel.py --config ... --once/--loop
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import platform
 import os
-# import sys
 import subprocess
 import argparse
 import json
@@ -175,12 +174,6 @@ class AlmatelCore:
     # ----------------------------
     # Config
     # ----------------------------
-    def load_config(self, config_path: str = "almatel_config.json") -> bool:
-        p = Path(config_path)
-
-        if not p.exists() and config_path.startswith("/homeassistant/"):
-            pass
-
     def load_config(self, config_path: str = "/homeassistant/almatel_config.json") -> bool:
         config_file = Path(config_path)
 
@@ -278,99 +271,105 @@ class AlmatelCore:
     def _fetch_balance_data(self) -> dict[str, Any]:
         if not HAVE_SELENIUM:
             self._err("Selenium is not installed, returning dummy data")
-            return {
-                "balance": "0",
-                "due_date": None,
-                "days_left": None,
-                "message": "Selenium не установлен",
-            }
+            return {"balance": "0", "due_date": None, "days_left": None, "message": "Selenium не установлен"}
 
         assert self.cfg is not None
 
-        options = Options()
-        if self.cfg.selenium.headless:
-            options.add_argument("--headless=new")
+        def one_attempt() -> dict[str, Any]:
+            options = Options()
 
-        if platform.system().lower() == "linux":
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
+            if self.cfg.selenium.headless:
+                options.add_argument("--headless=new")
 
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-software-rasterizer")
-        options.add_argument("--disable-webgl")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--log-level=3")
-        options.add_argument("--silent")
-        options.add_argument("--disable-logging")
-        options.add_argument("--disable-background-networking")
-        options.add_argument("--disable-sync")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
+            if platform.system().lower() == "linux":
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
 
-        driver = None
-        try:
-            service = None
+                for b in ("/usr/bin/chromium-browser", "/usr/bin/chromium"):
+                    if os.path.exists(b):
+                        try:
+                            options.binary_location = b
+                        except Exception:
+                            pass
+                        break
+
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-renderer-backgrounding")
+            options.add_argument("--disable-features=Translate,BackForwardCache")
+
+            driver = None
             devnull_handle = None
 
-            if self.cfg.selenium.chromedriver_path:
-                service = Service(self.cfg.selenium.chromedriver_path)
-            else:
-                service = Service()
-
             try:
-                service.log_output = subprocess.DEVNULL
-            except Exception:
+                driver_path = (self.cfg.selenium.chromedriver_path or "").strip()
+
+                if not driver_path and platform.system().lower() == "linux":
+                    default_driver = "/usr/lib/chromium/chromedriver"
+                    if os.path.exists(default_driver):
+                        driver_path = default_driver
+
+                if driver_path:
+                    if not os.path.exists(driver_path):
+                        raise RuntimeError(f"chromedriver not found at: {driver_path}")
+                    service = Service(executable_path=driver_path)
+                else:
+                    service = Service()
+
                 try:
-                    devnull_handle = open(os.devnull, "w")
-                    service.log_output = devnull_handle
+                    service.log_output = subprocess.DEVNULL
+                except Exception:
+                    try:
+                        devnull_handle = open(os.devnull, "w")
+                        service.log_output = devnull_handle
+                    except Exception:
+                        pass
+
+                driver = webdriver.Chrome(service=service, options=options)
+
+                try:
+                    driver.set_page_load_timeout(max(60, self.cfg.selenium.timeout))
+                except Exception:
+                    pass
+                try:
+                    driver.set_script_timeout(max(60, self.cfg.selenium.timeout))
                 except Exception:
                     pass
 
-            driver = webdriver.Chrome(service=service, options=options)
-            try:
-                driver.set_page_load_timeout(self.cfg.selenium.timeout)
-            except Exception:
-                pass
+                wait = WebDriverWait(driver, max(60, self.cfg.selenium.timeout))
 
-            wait = WebDriverWait(driver, self.cfg.selenium.timeout)
+                driver.get(self.url)
 
-            driver.get(self.url)
+                login_field = wait.until(EC.visibility_of_element_located((By.NAME, "login")))
+                password_field = wait.until(EC.visibility_of_element_located((By.NAME, "password")))
 
-            # Wait for login form
-            login_field = wait.until(EC.presence_of_element_located((By.NAME, "login")))
-            password_field = driver.find_element(By.NAME, "password")
+                login_field.clear()
+                login_field.send_keys(self.cfg.almatel_login)
+                password_field.clear()
+                password_field.send_keys(self.cfg.almatel_password)
 
-            # Enter credentials
-            login_field.clear()
-            login_field.send_keys(self.cfg.almatel_login)
-            password_field.clear()
-            password_field.send_keys(self.cfg.almatel_password)
+                login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
+                login_button.click()
 
-            # Submit form
-            login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
-            login_button.click()
+                # Баланс
+                balance_el = wait.until(
+                    EC.visibility_of_element_located(
+                        (By.XPATH, "//*[@id='profile-info']/div[3]/div/div[1]/div[1]/div/div[2]/div[2]/div[2]")
+                    )
+                )
+                balance_raw = balance_el.text or "0"
+                value_str = balance_raw.replace(" ", "").replace("₽", "").replace(",", ".")
+                balance = "{:.2f}".format(float(value_str))
 
-            balance = "0"
-            due_date = None
-            
-            try:
-                balance = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, "//*[@id='profile-info']/div[3]/div/div[1]/div[1]/div/div[2]/div[2]/div[2]"))).text
-                value_str = balance.replace(" ", "").replace("₽", "").replace(",", ".")
-                balance = "{:.2f}".format((float(value_str)))
-            except Exception as e:
-                print(f"Ошибка при получении баланса Алмател: {e}")
-                self._log(f"Error receiving Almatel balance: {e}")
-
-            days_left = None
-            msg = "Данные обновлены"
-
-            try:
-                due_date_raw = WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located(
+                # Дата оплаты
+                due_el = wait.until(
+                    EC.visibility_of_element_located(
                         (By.XPATH, "//*[@id='profile-info']/div[3]/div/div[1]/div[1]/div/div[2]/div[2]/div[4]")
                     )
-                ).text
-
+                )
+                due_date_raw = due_el.text or ""
                 due_date_2 = extract_date(due_date_raw)
 
                 if "не определено" in due_date_raw.lower() or due_date_2 is None:
@@ -384,39 +383,53 @@ class AlmatelCore:
 
                 msg, days_left = time_to_pay(due_date)
 
+                return {"balance": balance, "due_date": due_date, "days_left": days_left, "message": msg}
+
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                if devnull_handle:
+                    try:
+                        devnull_handle.close()
+                    except Exception:
+                        pass
+
+
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                return one_attempt()
             except Exception as e:
-                print(f"Ошибка при получении срока оплаты Алмател: {e}")
-                self._log(f"Error while receiving payment due date Almatel: {e}")
+                last_err = e
+                txt = str(e)
+                self._err(f"Selenium attempt {attempt}/3 failed: {txt}")
+                time.sleep(2 * attempt)
 
-            return {
-                "balance": balance,
-                "due_date": due_date,
-                "days_left": days_left,
-                "message": msg,
-            }
+                continue
 
-        except Exception as e:
-            self._err(f"Selenium error: {e}")
-            return {
-                "balance": "0",
-                "due_date": None,
-                "days_left": None,
-                "message": f"Ошибка: {str(e)}",
-            }
-
-        finally:
-            if driver:
-                driver.quit()
-            if devnull_handle:
-                try:
-                    devnull_handle.close()
-                except Exception:
-                    pass
+        return {"balance": "0", "due_date": None, "days_left": None, "message": f"Ошибка Selenium (3 попытки): {last_err}"}
 
 
     def run_check(self):
         assert self.cfg is not None
+
         data = self._fetch_balance_data()
+
+        ok = (
+            data.get("balance") not in (None, "")
+            and data.get("due_date") is not None
+        )
+
+        if ok:
+            self._last_good = data
+        else:
+            if self._last_good:
+                data = dict(self._last_good)
+                data["message"] = f"Не удалось обновить (использую прошлые данные). {data.get('message','')}"
+
         state = str(data.get("balance", "0"))
         attrs = {
             "due_date": data.get("due_date"),
