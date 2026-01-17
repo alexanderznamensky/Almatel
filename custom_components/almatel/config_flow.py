@@ -1,6 +1,7 @@
 """Config flow for Almatel integration."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 import voluptuous as vol
 
@@ -23,26 +24,19 @@ from .const import (
     DEFAULT_MQTT_HOST,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class AlmatelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Almatel."""
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the initial step."""
-
-        if self._async_current_entries():
-            return self.async_abort(reason="already_configured")
-
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
             await self.async_set_unique_id("almatelad")
-            return self.async_create_entry(
-                title="Almatel",
-                data=user_input,
-            )
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title="Almatel", data=user_input)
 
         data_schema = vol.Schema(
             {
@@ -57,15 +51,14 @@ class AlmatelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=data_schema,
-        )
+        return self.async_show_form(step_id="user", data_schema=data_schema)
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Create the options flow."""
         return AlmatelOptionsFlowHandler(config_entry)
 
 
@@ -73,27 +66,41 @@ class AlmatelOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options for Almatel."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            try:
+                return self.async_create_entry(title="", data=user_input)
+            except Exception as e:
+                _LOGGER.exception("❌ Failed to save options: %s", e)
+                errors["base"] = "unknown"
 
-        current = {**self.config_entry.data, **self.config_entry.options}
+        options = dict(self._config_entry.options or {})
+        data = dict(self._config_entry.data or {})
+
+        raw_interval = options.get(
+            CONF_UPDATE_INTERVAL,
+            data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        )
+
+        try:
+            current_interval = int(raw_interval)
+        except (TypeError, ValueError):
+            current_interval = DEFAULT_UPDATE_INTERVAL
+
+        current_interval = max(5, min(1440, current_interval))
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(
-                        CONF_UPDATE_INTERVAL,
-                        default=current.get(
-                            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
-                        ),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=1440)),
+                    vol.Optional(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(
+                        vol.Coerce(int), vol.Range(min=5, max=1440)
+                    ),
                 }
             ),
+            errors=errors,
         )

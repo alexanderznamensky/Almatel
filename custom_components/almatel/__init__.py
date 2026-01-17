@@ -4,15 +4,9 @@ from __future__ import annotations
 import json
 import logging
 
-import paho.mqtt.publish as publish
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.components import mqtt
-
-from . import sensor
 
 from .const import (
     DOMAIN,
@@ -23,7 +17,6 @@ from .const import (
     CONF_MQTT_USER,
     CONF_MQTT_PASSWORD,
     CONF_UPDATE_INTERVAL,
-    MQTT_COMMAND_TOPIC,
     SERVICE_UPDATE,
 )
 
@@ -42,15 +35,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    async def handle_update_balance(call: ServiceCall) -> None:
-        """Handle the service call to update balance."""
-        await async_trigger_appdaemon_update(hass, entry)
+    if not hass.services.has_service(DOMAIN, SERVICE_UPDATE):
+        async def handle_update_balance(call: ServiceCall) -> None:
+            """Handle the service call to update balance."""
+            await async_trigger_button_press(hass)
 
-    hass.services.async_register(DOMAIN, SERVICE_UPDATE, handle_update_balance)
+        hass.services.async_register(DOMAIN, SERVICE_UPDATE, handle_update_balance)
 
-    await async_trigger_appdaemon_update(hass, entry)
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     return True
+
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    await async_save_config_for_appdaemon(hass, entry)
+    _LOGGER.info("Almatel configuration updated")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -59,6 +59,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN]:
+            hass.services.async_remove(DOMAIN, SERVICE_UPDATE)
 
     return unload_ok
 
@@ -95,16 +97,27 @@ async def async_save_config_for_appdaemon(
     await hass.async_add_executor_job(write_config)
 
 
-async def async_trigger_appdaemon_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Send MQTT command to trigger AppDaemon update via HA MQTT connection."""
+async def async_trigger_button_press(hass: HomeAssistant) -> None:
+    """Trigger AppDaemon update by pressing input_button."""
+    button_entity_id = "input_button.manual_almatel_check"
+    
     try:
-        await mqtt.async_publish(
-            hass,
-            MQTT_COMMAND_TOPIC,
-            "update",
-            qos=0,
-            retain=False,
+        state = hass.states.get(button_entity_id)
+        
+        if state is None:
+            _LOGGER.warning(
+                "Button %s not found. Please create it in configuration.yaml",
+                button_entity_id
+            )
+            return
+        
+        await hass.services.async_call(
+            "input_button",
+            "press",
+            {"entity_id": button_entity_id},
+            blocking=False,
         )
-        _LOGGER.info("MQTT command published to %s", MQTT_COMMAND_TOPIC)
+        _LOGGER.info("Button %s pressed successfully", button_entity_id)
+        
     except Exception as e:
-        _LOGGER.exception("Failed to publish MQTT command: %s", e)
+        _LOGGER.error("Failed to press button %s: %s", button_entity_id, e)

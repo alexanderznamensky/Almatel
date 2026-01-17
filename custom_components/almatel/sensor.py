@@ -47,7 +47,6 @@ class AlmatelAdSensor(SensorEntity):
     _attr_name = "Almatel Баланс"
     _attr_unique_id = f"{DOMAIN}_almatelad"
 
-    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = "RUB"
     _attr_icon = "mdi:cash"
 
