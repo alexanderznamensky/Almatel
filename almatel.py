@@ -1,9 +1,9 @@
 # almatel.py
-# v6 - 2026-01-14
+# v8 - 2026-01-17
 # Universal AppDaemon + CLI runner for Almatel balance checker
 # - Works as AppDaemon app class: Almatel(hass.Hass)
 # - Works as CLI script: python almatel.py --config ... --once/--loop
-#
+
 # Key points:
 # - update_interval is stored in MINUTES (default 60), converted to seconds only for scheduling/sleep.
 # - MQTT Discovery is published so Home Assistant creates exactly one entity: sensor.almatelad
@@ -18,10 +18,16 @@ import argparse
 import json
 import re
 import time
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+APP_LANG = os.getenv("APP_LANG", "ru")
+
+def _is_windows() -> bool:
+    return platform.system().lower().startswith("win")
 
 def extract_date(input_str):
     match = re.search(r'\d{2}\.\d{2}\.\d{4}', input_str)
@@ -62,7 +68,7 @@ def time_to_pay(due_date: str):
 # AppDaemon optional import
 # ----------------------------
 try:
-    import appdaemon.plugins.hass.hassapi as hass
+    import appdaemon.plugins.hass.hassapi as hass # type: ignore
     HAVE_APPDAEMON = True
 except Exception:
     HAVE_APPDAEMON = False
@@ -106,6 +112,7 @@ try:
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.common.exceptions import TimeoutException
     HAVE_SELENIUM = True
 except Exception:
     HAVE_SELENIUM = False
@@ -120,7 +127,10 @@ except Exception:
 class SeleniumConfig:
     chromedriver_path: str | None = None
     headless: bool = True
-    timeout: int = 20
+    timeout: int = 22
+    hard_timeout: int = 25
+    profile_dir: str | None = None
+    disable_images: bool = True
 
 @dataclass
 class AlmatelConfig:
@@ -150,6 +160,8 @@ class AlmatelCore:
     def __init__(self, logger=None, error_logger=None):
         self._logger = logger
         self._error_logger = error_logger
+        self._last_good: dict[str, Any] | None = None
+        self._run_lock = threading.Lock()
 
     def _log(self, msg: str) -> None:
         if callable(self._logger):
@@ -208,7 +220,10 @@ class AlmatelCore:
             selenium=SeleniumConfig(
                 chromedriver_path=sel.get("chromedriver_path"),
                 headless=bool(sel.get("headless", True)),
-                timeout=int(sel.get("timeout", 20)),
+                timeout=int(sel.get("timeout", 25)),
+                hard_timeout=int(sel.get("hard_timeout", 30)),
+                profile_dir=(sel.get("profile_dir") or None),
+                disable_images=bool(sel.get("disable_images", True)),
             ),
         )
         return True
@@ -268,6 +283,66 @@ class AlmatelCore:
     # ----------------------------
     # Selenium parsing logic
     # ----------------------------
+    @staticmethod
+    def _build_options(headless: bool, profile_dir: str | None = None, disable_images: bool = False) -> "Options": # type: ignore
+        opts = Options()
+        if headless:
+            opts.add_argument("--headless=new")
+
+        if profile_dir:
+            opts.add_argument(f"--user-data-dir={profile_dir}")
+        else:
+            opts.add_argument("--incognito")
+        try:
+            opts.page_load_strategy = "eager"
+        except Exception:
+            pass
+
+        opts.add_argument("--window-size=1366,968")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--disable-extensions")
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-component-update")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--no-default-browser-check")
+        opts.add_argument("--metrics-recording-only")
+        opts.add_argument("--safebrowsing-disable-auto-update")
+        opts.add_argument("--disable-features=TranslateUI")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_argument("--disable-features=IsolateOrigins,site-per-process")
+
+        if disable_images:
+            opts.add_argument("--blink-settings=imagesEnabled=false")
+
+        if (APP_LANG or "").lower().startswith("en"):
+            opts.add_argument("--lang=en-US")
+            opts.add_argument("--accept-lang=en-US,en,ru-RU,ru")
+            user_agent = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/119.0.0.0 Safari/537.36"
+            )
+        else:
+            opts.add_argument("--lang=ru-RU")
+            opts.add_argument("--accept-lang=ru-RU,ru,en-US,en")
+            user_agent = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/119.0.0.0 Safari/537.36"
+            )
+
+        opts.add_argument(f"--user-agent={user_agent}")
+        try:
+            opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            opts.add_experimental_option("useAutomationExtension", False)
+        except Exception:
+            pass
+
+        return opts
+
     def _fetch_balance_data(self) -> dict[str, Any]:
         if not HAVE_SELENIUM:
             self._err("Selenium is not installed, returning dummy data")
@@ -275,16 +350,43 @@ class AlmatelCore:
 
         assert self.cfg is not None
 
-        def one_attempt() -> dict[str, Any]:
-            options = Options()
+        def _timeout_guard(seconds: int):
+            if platform.system().lower() != "linux":
+                return None
+            if threading.current_thread() is not threading.main_thread():
+                return None
+            try:
+                import signal
 
-            if self.cfg.selenium.headless:
-                options.add_argument("--headless=new")
+                def _raise(_signum, _frame):
+                    raise TimeoutError(f"Selenium hard timeout after {seconds}s")
+
+                signal.signal(signal.SIGALRM, _raise)
+                signal.alarm(max(1, int(seconds)))
+                return signal
+            except Exception:
+                return None
+
+        def one_attempt() -> dict[str, Any]:
+            attempt_start = time.monotonic()
+            headless = bool(self.cfg.selenium.headless)
+            if _is_windows():
+                headless = False
+            profile_dir = self.cfg.selenium.profile_dir
+            if not profile_dir and platform.system().lower() == "linux":
+                profile_dir = "/homeassistant/.almatel_chrome_profile"
+
+            if profile_dir:
+                try:
+                    os.makedirs(profile_dir, exist_ok=True)
+                except Exception:
+                    profile_dir = None
+
+            disable_images = bool(self.cfg.selenium.disable_images)
+
+            options = self._build_options(headless=headless, profile_dir=profile_dir, disable_images=disable_images)
 
             if platform.system().lower() == "linux":
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-
                 for b in ("/usr/bin/chromium-browser", "/usr/bin/chromium"):
                     if os.path.exists(b):
                         try:
@@ -293,17 +395,13 @@ class AlmatelCore:
                             pass
                         break
 
-            options.add_argument("--disable-gpu")
-            options.add_argument("--window-size=1920,1080")
-            options.add_argument("--disable-background-timer-throttling")
-            options.add_argument("--disable-backgrounding-occluded-windows")
-            options.add_argument("--disable-renderer-backgrounding")
-            options.add_argument("--disable-features=Translate,BackForwardCache")
-
             driver = None
             devnull_handle = None
+            guard = None
 
             try:
+                guard = _timeout_guard(int(self.cfg.selenium.hard_timeout))
+
                 driver_path = (self.cfg.selenium.chromedriver_path or "").strip()
 
                 if not driver_path and platform.system().lower() == "linux":
@@ -330,30 +428,33 @@ class AlmatelCore:
                 driver = webdriver.Chrome(service=service, options=options)
 
                 try:
-                    driver.set_page_load_timeout(max(60, self.cfg.selenium.timeout))
+                    driver.set_page_load_timeout(int(self.cfg.selenium.timeout))
                 except Exception:
                     pass
                 try:
-                    driver.set_script_timeout(max(60, self.cfg.selenium.timeout))
+                    driver.set_script_timeout(int(self.cfg.selenium.timeout))
                 except Exception:
                     pass
 
-                wait = WebDriverWait(driver, max(60, self.cfg.selenium.timeout))
+                wait = WebDriverWait(driver, int(self.cfg.selenium.timeout))
 
                 driver.get(self.url)
 
-                login_field = wait.until(EC.visibility_of_element_located((By.NAME, "login")))
-                password_field = wait.until(EC.visibility_of_element_located((By.NAME, "password")))
+                try:
+                    quick_wait = WebDriverWait(driver, min(5, int(self.cfg.selenium.timeout)))
+                    login_field = quick_wait.until(EC.visibility_of_element_located((By.NAME, "login")))
+                    password_field = quick_wait.until(EC.visibility_of_element_located((By.NAME, "password")))
 
-                login_field.clear()
-                login_field.send_keys(self.cfg.almatel_login)
-                password_field.clear()
-                password_field.send_keys(self.cfg.almatel_password)
+                    login_field.clear()
+                    login_field.send_keys(self.cfg.almatel_login)
+                    password_field.clear()
+                    password_field.send_keys(self.cfg.almatel_password)
 
-                login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
-                login_button.click()
+                    login_button = quick_wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
+                    login_button.click()
+                except TimeoutException:
+                    self._log("Login form not found quickly — assuming session is already authenticated")
 
-                # Баланс
                 balance_el = wait.until(
                     EC.visibility_of_element_located(
                         (By.XPATH, "//*[@id='profile-info']/div[3]/div/div[1]/div[1]/div/div[2]/div[2]/div[2]")
@@ -363,7 +464,6 @@ class AlmatelCore:
                 value_str = balance_raw.replace(" ", "").replace("₽", "").replace(",", ".")
                 balance = "{:.2f}".format(float(value_str))
 
-                # Дата оплаты
                 due_el = wait.until(
                     EC.visibility_of_element_located(
                         (By.XPATH, "//*[@id='profile-info']/div[3]/div/div[1]/div[1]/div/div[2]/div[2]/div[4]")
@@ -373,19 +473,26 @@ class AlmatelCore:
                 due_date_2 = extract_date(due_date_raw)
 
                 if "не определено" in due_date_raw.lower() or due_date_2 is None:
-                    self._log("The deadline has not been set. Funds are insufficient.")
                     due_date = datetime.now().strftime("%d.%m.%Y")
                 elif not re.match(r"^\d{2}\.\d{2}\.\d{4}$", due_date_2):
-                    self._log("Invalid date format, using current")
                     due_date = datetime.now().strftime("%d.%m.%Y")
                 else:
                     due_date = due_date_2
 
                 msg, days_left = time_to_pay(due_date)
 
-                return {"balance": balance, "due_date": due_date, "days_left": days_left, "message": msg}
+                result = {"balance": balance, "due_date": due_date, "days_left": days_left, "message": msg}
+                return result
 
             finally:
+                attempt_time = time.monotonic() - attempt_start
+                self._log(f"Selenium attempt finished in {attempt_time:.2f}s")
+                try:
+                    if guard is not None:
+                        guard.alarm(0)
+                except Exception:
+                    pass
+
                 if driver:
                     try:
                         driver.quit()
@@ -397,48 +504,61 @@ class AlmatelCore:
                     except Exception:
                         pass
 
+        if not self._run_lock.acquire(blocking=False):
+            self._err("Previous Almatel selenium run is still in progress, skipping this cycle")
+            return {
+                "balance": None,
+                "due_date": None,
+                "days_left": None,
+                "message": "Пропуск: предыдущая проверка ещё выполняется",
+            }
 
-        last_err = None
-        for attempt in range(1, 4):
+        try:
+            last_err = None
+            for attempt in range(1, 3):
+                try:
+                    return one_attempt()
+                except Exception as e:
+                    last_err = e
+                    txt = str(e)
+                    self._err(f"Selenium attempt {attempt}/2 failed: {txt}")
+                    time.sleep(2 * attempt)
+                    continue
+
+            return {
+                "balance": "0",
+                "due_date": None,
+                "days_left": None,
+                "message": f"Ошибка Selenium (2 попытки): {last_err}",
+            }
+        finally:
             try:
-                return one_attempt()
-            except Exception as e:
-                last_err = e
-                txt = str(e)
-                self._err(f"Selenium attempt {attempt}/3 failed: {txt}")
-                time.sleep(2 * attempt)
-
-                continue
-
-        return {"balance": "0", "due_date": None, "days_left": None, "message": f"Ошибка Selenium (3 попытки): {last_err}"}
-
+                self._run_lock.release()
+            except Exception:
+                pass
 
     def run_check(self):
         assert self.cfg is not None
-
+        start_ts = time.monotonic()
         data = self._fetch_balance_data()
-
-        ok = (
-            data.get("balance") not in (None, "")
-            and data.get("due_date") is not None
-        )
-
+        total_time = time.monotonic() - start_ts
+        self.log(f"Almatel check finished in {total_time:.2f}s")
+        ok = (data.get("balance") not in (None, "") and data.get("due_date") is not None)
         if ok:
             self._last_good = data
         else:
             if self._last_good:
                 data = dict(self._last_good)
                 data["message"] = f"Не удалось обновить (использую прошлые данные). {data.get('message','')}"
-
         state = str(data.get("balance", "0"))
         attrs = {
             "due_date": data.get("due_date"),
             "days_left": data.get("days_left"),
             "message": data.get("message", ""),
         }
-
         self.publish_state(state, attrs)
         self.log(f"MQTT published: Almatel balance: {state}. Due date: {attrs['due_date']}. Days left: {attrs['days_left']}.")
+
 
 # ----------------------------
 # AppDaemon wrapper
@@ -448,10 +568,18 @@ class Almatel(hass.Hass):
 
     def initialize(self):
         self.core = AlmatelCore(logger=self.log, error_logger=self.error)
+        self._ad_run_lock = threading.Lock()
+
+        self._timer_handle = None
+        self._watch_handle = None
+        self._last_interval_seconds = None
+        self._config_mtime = None
 
         if not self.core.load_config(self.CONFIG_PATH):
             self.log(f"Almatel disabled: config not found or invalid: {self.CONFIG_PATH}")
             return
+
+        self._config_mtime = self._get_config_mtime()
 
         try:
             self.core.publish_discovery()
@@ -459,22 +587,83 @@ class Almatel(hass.Hass):
             self.error(f"MQTT discovery error: {e}")
             return
 
+        self._schedule_from_config(initial=True)
+
+        self._watch_handle = self.run_every(self._watch_config_cb, "now", 15)
+
+        self.listen_event(
+            self.manual_run,
+            "call_service",
+            domain="input_button",
+            service="press",
+            entity_id="input_button.manual_almatel_check",
+        )
+
+    def _get_config_mtime(self):
+        try:
+            return Path(self.CONFIG_PATH).stat().st_mtime
+        except Exception:
+            return None
+
+    def _schedule_from_config(self, initial: bool = False) -> None:
         try:
             interval_seconds = max(60, int(self.core.cfg.update_interval) * 60)
         except Exception:
             interval_seconds = 3600
 
-        self.run_every(self._run_every_cb, "now", interval_seconds)
-        self.listen_event(self.manual_run, "call_service", domain="input_button", service="press", entity_id="input_button.manual_almatel_check")
+        if self._last_interval_seconds == interval_seconds and not initial:
+            return
+
+        if self._timer_handle is not None:
+            try:
+                self.cancel_timer(self._timer_handle)
+            except Exception:
+                pass
+
+        self._timer_handle = self.run_every(self._run_every_cb, "now", interval_seconds)
+        self._last_interval_seconds = interval_seconds
+
+        self.log(f"Almatel scheduled every {interval_seconds // 60} min")
+
+    def _watch_config_cb(self, kwargs):
+        """Reload config if file changed and reschedule timer if interval changed."""
+        try:
+            mtime = self._get_config_mtime()
+            if mtime is None:
+                return
+
+            if self._config_mtime is None:
+                self._config_mtime = mtime
+                return
+
+            if mtime != self._config_mtime:
+                self._config_mtime = mtime
+
+                if not self.core.load_config(self.CONFIG_PATH):
+                    self.error("Config changed but failed to reload (keeping previous schedule)")
+                    return
+
+                self._schedule_from_config()
+
+        except Exception as e:
+            self.error(f"_watch_config_cb failed: {e}")
 
     def _run_every_cb(self, kwargs):
         self.run_in(self._run_check_worker, 0)
 
     def _run_check_worker(self, kwargs):
+        if not self._ad_run_lock.acquire(blocking=False):
+            self.log("Skipping Almatel check: previous worker is still running")
+            return
         try:
             self.core.run_check()
         except Exception as e:
             self.error(f"Almatel run_check failed: {e}")
+        finally:
+            try:
+                self._ad_run_lock.release()
+            except Exception:
+                pass
 
     def manual_run(self, event_name, data, kwargs):
         try:
@@ -484,19 +673,6 @@ class Almatel(hass.Hass):
                 self.run_in(self._run_check_worker, 0)
         except Exception as e:
             self.error(f"manual_run failed: {e}")
-
-def manual_run(self, event_name, data, kwargs):
-    try:
-        entity = data.get("service_data", {}).get("entity_id")
-
-        if entity == "input_button.manual_almatel_check" or (
-            isinstance(entity, list) and "input_button.manual_almatel_check" in entity
-        ):
-            self.log("Manual Almatel check triggered")
-            self.run_in(self._run_check_worker, 0)
-
-    except Exception as e:
-        self.error(f"manual_run failed: {e}")
 
 
 # ----------------------------
