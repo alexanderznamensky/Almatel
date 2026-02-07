@@ -67,10 +67,10 @@ cd /config/custom_components/
 
 1. Скопируйте файл `almatel.py` в папку AppDaemon:
    ```bash
-   cp almatel.py /config/appdaemon/apps/
+   cp almatel.py /addon_configs/a0d7b954_appdaemon/apps/
    ```
 
-2. Добавьте в `/config/appdaemon/apps/apps.yaml`:
+2. Добавьте в `/addon_configs/a0d7b954_appdaemon/apps/apps.yaml`:
    ```yaml
    almatel:
      module: almatel
