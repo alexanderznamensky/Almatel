@@ -33,6 +33,8 @@
 - Chromium / ChromeDriver
 - paho-mqtt
 
+### SSH, SAMBA, HACS
+
 ## 🚀 Установка
 
 ### Шаг 1: Установка интеграции
