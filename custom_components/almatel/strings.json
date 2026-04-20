@@ -2,35 +2,28 @@
   "config": {
     "step": {
       "user": {
-        "title": "Настройка Almatel",
-        "description": "Введите данные для доступа к личному кабинету Almatel и настройки MQTT",
+        "title": "Подключение Almatel",
+        "description": "Введите данные личного кабинета Almatel",
         "data": {
-          "almatel_login": "Логин Almatel",
-          "almatel_password": "Пароль Almatel",
-          "mqtt_host": "MQTT хост",
-          "mqtt_port": "MQTT порт",
-          "mqtt_user": "MQTT пользователь",
-          "mqtt_password": "MQTT пароль",
-          "update_interval": "Интервал обновления (минуты)"
+          "login": "Логин",
+          "password": "Пароль",
+          "scan_interval": "Интервал обновления, минут"
         }
       }
     },
     "error": {
-      "cannot_connect": "Не удалось подключиться",
-      "invalid_auth": "Неверные данные авторизации",
-      "unknown": "Неизвестная ошибка"
+      "cannot_connect": "Не удалось подключиться или авторизоваться"
     },
     "abort": {
-      "already_configured": "Интеграция уже настроена"
+      "already_configured": "Эта учетная запись уже добавлена"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Настройки Almatel",
-        "description": "Изменить параметры интеграции",
         "data": {
-          "update_interval": "Интервал обновления (минуты)"
+          "scan_interval": "Интервал обновления, минут"
         }
       }
     }

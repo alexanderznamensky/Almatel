@@ -1,13 +1,13 @@
 {
   "domain": "almatel",
   "name": "Almatel",
-  "codeowners": ["@alexanderznamensky"],
+  "version": "6.0.0",
   "config_flow": true,
   "documentation": "https://github.com/alexanderznamensky/Almatel",
   "issue_tracker": "https://github.com/alexanderznamensky/Almatel/issues",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "requirements": ["paho-mqtt>=1.6.1"],
-  "dependencies": ["mqtt"],
-  "version": "5.0.5"
+  "requirements": ["beautifulsoup4>=4.12.0"],
+  "dependencies": [],
+  "codeowners": ["@alexanderznamensky"]
 }

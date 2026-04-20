@@ -1,106 +1,107 @@
-"""Config flow for Almatel integration."""
 from __future__ import annotations
 
-import logging
-from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.helpers import selector
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
-import homeassistant.helpers.config_validation as cv
 
 from .const import (
+    CONF_LOGIN,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    CONF_ALMATEL_LOGIN,
-    CONF_ALMATEL_PASSWORD,
-    CONF_MQTT_HOST,
-    CONF_MQTT_PORT,
-    CONF_MQTT_USER,
-    CONF_MQTT_PASSWORD,
-    CONF_UPDATE_INTERVAL,
-    DEFAULT_MQTT_PORT,
-    DEFAULT_UPDATE_INTERVAL,
-    DEFAULT_MQTT_HOST,
 )
-
-_LOGGER = logging.getLogger(__name__)
+from .coordinator import AlmatelApiClient
 
 
 class AlmatelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Almatel."""
-
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        if user_input is not None:
-            await self.async_set_unique_id("almatelad")
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title="Almatel", data=user_input)
+    async def async_step_user(self, user_input=None):
+        errors = {}
 
-        data_schema = vol.Schema(
+        if user_input is not None:
+            login = user_input[CONF_LOGIN]
+            password = user_input[CONF_PASSWORD]
+            scan_interval = user_input[CONF_SCAN_INTERVAL]
+
+            await self.async_set_unique_id(login)
+            self._abort_if_unique_id_configured()
+
+            client = AlmatelApiClient(login, password)
+
+            try:
+                await client.async_validate_login()
+            except Exception:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_create_entry(
+                    title=f"Almatel ({login})",
+                    data={
+                        CONF_LOGIN: login,
+                        CONF_PASSWORD: password,
+                        CONF_SCAN_INTERVAL: scan_interval,
+                    },
+                )
+
+        schema = vol.Schema(
             {
-                vol.Required(CONF_ALMATEL_LOGIN): cv.string,
-                vol.Required(CONF_ALMATEL_PASSWORD): cv.string,
-                vol.Required(CONF_MQTT_HOST, default=DEFAULT_MQTT_HOST): cv.string,
-                vol.Required(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): cv.port,
-                vol.Required(CONF_MQTT_USER, default=""): cv.string,
-                vol.Required(CONF_MQTT_PASSWORD, default=""): cv.string,
-                vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.All(
-                    vol.Coerce(int), vol.Range(min=5, max=1440)
+                vol.Required(CONF_LOGIN): str,
+                vol.Required(CONF_PASSWORD): str,
+                vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5,
+                        max=1440,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="min",
+                    )
                 ),
             }
         )
-        return self.async_show_form(step_id="user", data_schema=data_schema)
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors=errors,
+        )
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Create the options flow."""
-        return AlmatelOptionsFlowHandler(config_entry)
+    def async_get_options_flow(config_entry):
+        return AlmatelOptionsFlow(config_entry)
 
 
-class AlmatelOptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options for Almatel."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+class AlmatelOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self, config_entry):
         self._config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        errors: dict[str, str] = {}
-
+    async def async_step_init(self, user_input=None):
         if user_input is not None:
-            try:
-                return self.async_create_entry(title="", data=user_input)
-            except Exception as e:
-                _LOGGER.exception("❌ Failed to save options: %s", e)
-                errors["base"] = "unknown"
+            return self.async_create_entry(title="", data=user_input)
 
-        options = dict(self._config_entry.options or {})
-        data = dict(self._config_entry.data or {})
-
-        raw_interval = options.get(
-            CONF_UPDATE_INTERVAL,
-            data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        current_scan_interval = self._config_entry.options.get(
+            CONF_SCAN_INTERVAL,
+            self._config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         )
 
-        try:
-            current_interval = int(raw_interval)
-        except (TypeError, ValueError):
-            current_interval = DEFAULT_UPDATE_INTERVAL
-
-        current_interval = max(5, min(1440, current_interval))
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_SCAN_INTERVAL, default=current_scan_interval): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5,
+                        max=1440,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="min",
+                    )
+                ),
+            }
+        )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(
-                        vol.Coerce(int), vol.Range(min=5, max=1440)
-                    ),
-                }
-            ),
-            errors=errors,
+            data_schema=schema,
         )

@@ -1,37 +1,12 @@
-"""Constants for the Almatel integration."""
-
 DOMAIN = "almatel"
 
-# Configuration keys
-CONF_ALMATEL_LOGIN = "almatel_login"
-CONF_ALMATEL_PASSWORD = "almatel_password"
-CONF_MQTT_HOST = "mqtt_host"
-CONF_MQTT_PORT = "mqtt_port"
-CONF_MQTT_USER = "mqtt_user"
-CONF_MQTT_PASSWORD = "mqtt_password"
-CONF_UPDATE_INTERVAL = "update_interval"
+CONF_LOGIN = "login"
+CONF_PASSWORD = "password"
+CONF_SCAN_INTERVAL = "scan_interval"
 
-# Aliases for compatibility
-CONF_ALMATEL_USERNAME = CONF_ALMATEL_LOGIN
-CONF_MQTT_USERNAME = CONF_MQTT_USER
+DEFAULT_NAME = "Almatel Личный Кабинет"
+DEFAULT_SCAN_INTERVAL = 60  # minutes
 
-# Default values
-DEFAULT_MQTT_HOST = "localhost"
-DEFAULT_MQTT_PORT = 1883
-DEFAULT_UPDATE_INTERVAL = 60
+LOGIN_URL = "https://almatel.ru/lk/login.php"
 
-# MQTT topics
-MQTT_STATE_TOPIC = "custom_sensors/almatel/state"
-MQTT_ATTR_TOPIC = "custom_sensors/almatel/attributes"
-MQTT_CONFIG_TOPIC = "homeassistant/sensor/almatel/config"
-MQTT_COMMAND_TOPIC = "custom_sensors/almatel/command"
-
-# Service names
-SERVICE_UPDATE = "update_balance"
-SERVICE_UPDATE_BALANCE = SERVICE_UPDATE
-
-# Sensor attributes
-ATTR_DUE_DATE = "due_date"
-ATTR_DAYS_LEFT = "days_left"
-ATTR_MESSAGE = "message"
-ATTR_LAST_UPDATE = "last_update"
+PLATFORMS = ["sensor"]
