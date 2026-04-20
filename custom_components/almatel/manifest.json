@@ -1,7 +1,7 @@
 {
   "domain": "almatel",
   "name": "Almatel",
-  "version": "6.0.0",
+  "version": "6.0.1",
   "config_flow": true,
   "documentation": "https://github.com/alexanderznamensky/Almatel",
   "issue_tracker": "https://github.com/alexanderznamensky/Almatel/issues",
