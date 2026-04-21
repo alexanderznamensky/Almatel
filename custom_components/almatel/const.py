@@ -9,4 +9,4 @@ DEFAULT_SCAN_INTERVAL = 60  # minutes
 
 LOGIN_URL = "https://almatel.ru/lk/login.php"
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "button"]
