@@ -2,12 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "Подключение Almatel",
-        "description": "Введите данные личного кабинета Almatel",
+        "title": "Подключение ISP Алмател",
+        "description": "Введите данные личного кабинета ISP Алмател",
         "data": {
           "login": "Логин",
           "password": "Пароль",
-          "scan_interval": "Интервал обновления, минут"
+          "scan_interval": "Интервал обновления, мин."
         }
       }
     },
@@ -21,9 +21,9 @@
   "options": {
     "step": {
       "init": {
-        "title": "Настройки Almatel",
+        "title": "Настройки ISP Алмател",
         "data": {
-          "scan_interval": "Интервал обновления, минут"
+          "scan_interval": "Интервал обновления, мин."
         }
       }
     }

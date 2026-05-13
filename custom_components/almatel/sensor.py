@@ -31,6 +31,7 @@ class AlmatelBalanceSensor(CoordinatorEntity[AlmatelDataUpdateCoordinator], Sens
     _attr_icon = "mdi:cash"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = _ATTR_CURRENCY
+    _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: AlmatelDataUpdateCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -40,7 +41,12 @@ class AlmatelBalanceSensor(CoordinatorEntity[AlmatelDataUpdateCoordinator], Sens
 
     @property
     def native_value(self):
-        return self.coordinator.data.get("balance")
+        balance = self.coordinator.data.get("balance")
+
+        if balance is None:
+            return None
+
+        return float(f"{float(balance):.2f}")
 
     @property
     def extra_state_attributes(self):
