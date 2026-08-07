@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import ssl
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from homeassistant.core import HomeAssistant
@@ -25,6 +28,18 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_CA_CERT_PATH = Path(__file__).with_name("gsgccr46dvtlsca2025.pem")
+
+
+class _AlmatelSSLAdapter(HTTPAdapter):
+    def __init__(self, ssl_context: ssl.SSLContext, **kwargs) -> None:
+        self._ssl_context = ssl_context
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["ssl_context"] = self._ssl_context
+        return super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
+
 
 
 def normalize(text: str) -> str:
@@ -269,7 +284,14 @@ class AlmatelApiClient:
         self._password = password
 
     def _build_session(self) -> requests.Session:
+        if not _CA_CERT_PATH.is_file():
+            raise RuntimeError(f"Almatel intermediate CA certificate not found: {_CA_CERT_PATH}")
+
+        ssl_context = ssl.create_default_context()
+        ssl_context.load_verify_locations(cafile=str(_CA_CERT_PATH))
+
         session = requests.Session()
+        session.mount("https://", _AlmatelSSLAdapter(ssl_context))
         session.headers.update(
             {
                 "User-Agent": (
@@ -397,5 +419,9 @@ class AlmatelDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if "Authentication failed" in str(err):
                 raise ConfigEntryAuthFailed("Authentication failed") from err
             raise UpdateFailed(str(err)) from err
+        except requests.exceptions.SSLError as err:
+            _LOGGER.error("Almatel SSL verification failed: %s", err)
+            raise UpdateFailed(f"SSL certificate verification failed: {err}") from err
         except Exception as err:
+            _LOGGER.exception("Unexpected error while updating Almatel")
             raise UpdateFailed(f"Unexpected error: {err}") from err
